@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Snake (Color Cycling + Overlay)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #111316;
+      --grid: #1a1f24;
+      --text: #e9eef3;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(1200px 800px at 50% 0%, #0d0f12 0%, var(--bg) 50%, #0b0c0f 100%);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      color: var(--text);
+    }
+
+    .wrap {
+      display: grid;
+      gap: 12px;
+      place-items: center;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+
+    .hud {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      font-weight: 600;
+    }
+
+    .badge {
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: #12161a;
+      border: 1px solid #232a30;
+      box-shadow: inset 0 1px 0 #0b0e12;
+    }
+
+    .btn {
+      cursor: pointer;
+      padding: 8px 14px;
+      border-radius: 10px;
+      border: 1px solid #2a3138;
+      color: var(--text);
+      background: linear-gradient(180deg, #1a2127, #151a1f);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+      transition: transform 0.05s ease, box-shadow 0.1s ease;
+    }
+    .btn:hover { box-shadow: 0 4px 10px rgba(0,0,0,0.45); }
+    .btn:active { transform: translateY(1px); }
+
+    canvas {
+      background:
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 20px 20px,
+        linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 20px 20px,
+        #0f1317;
+      border-radius: 14px;
+      border: 1px solid #263039;
+      image-rendering: pixelated;
+      box-shadow:
+        0 20px 50px rgba(0,0,0,0.55),
+        inset 0 1px 0 rgba(255,255,255,0.03);
+    }
+
+    .note {
+      opacity: 0.8;
+      font-size: 0.9rem;
+    }
+
+    .board-wrap {
+  position: relative;
+  width: 400px;
+  height: 400px;
+}
+
+#cantEatOverlay {
+  display: none; /* hidden until game over */
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.6); /* semi-transparent dark overlay */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border-radius: 14px;
+}
+
+#cantEatOverlay img {
+  max-width: 180px;
+  border-radius: 8px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+  margin-bottom: 12px;
+}
+
+.overlay-text {
+  font-size: 24px;
+  font-weight: bold;
+  color: #e94e77;
+  margin-bottom: 6px;
+}
+
+.overlay-sub {
+  font-size: 14px;
+  color: #e9eef3;
+  opacity: 0.8;
+}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Sid The Snakes Snack</h1>
+    <div class="hud">
+      <div class="badge">Score: <span id="score">0</span></div>
+      <div class="badge">High: <span id="high">0</span></div>
+      <button class="btn" id="restart">Restart</button>
+    </div>
+
+    <!-- Game board -->
+    <canvas id="board" width="400" height="400" aria-label="Snake game" tabindex="0"></canvas>
+
+    <!-- Overlay that appears on game over -->
+    <div id="cantEatOverlay" style="display:none; text-align:center; margin-top:20px;">
+      <img id="cantEatImage"
+           src="cartoon-style snake .png"
+           alt="Forbidden item"
+           style="max-width:200px; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.4);" />
+      <div style="font-size:14px; margin-top:6px; opacity:0.8;">
+        press space to play again
+      </div>
+    </div>
+
+    <div class="note">Use arrow keys or WASD. Avoid the walls and yourself. Eat food to grow.</div>
+  </div>
+
+  <script>
+    // Configuration
+    const TILE = 20;
+    const COLS = 20;
+    const ROWS = 20;
+    const START_LEN = 3;
+    const TICK_MS = 110;
+
+    // Snake colors palette
+    const SNAKE_COLORS = [
+      '#1e90ff', // blue
+      '#32cd32', // green
+      '#ff4500', // orange-red
+      '#ff69b4', // pink
+      '#ffd700', // gold
+      '#8a2be2', // purple
+      '#00ced1'  // turquoise
+    ];
+    let currentColorIndex = 0;
+
+    const COLORS = {
+      snake: SNAKE_COLORS[currentColorIndex],
+      snakeHead: SNAKE_COLORS[currentColorIndex],
+      food: '#e94e77',
+      foodGlow: '#ff8fb3'
+    };
+
+    const canvas = document.getElementById('board');
+    const ctx = canvas.getContext('2d');
+
+    const $score = document.getElementById('score');
+    const $high = document.getElementById('high');
+    const $restart = document.getElementById('restart');
+
+    let loopId = null;
+    let running = false;
+
+    let snake, dir, nextDir, food, score, high;
+
+    try {
+      high = parseInt(localStorage.getItem('snakeHigh') || '0', 10);
+    } catch {
+      high = 0;
+    }
+    $high.textContent = high;
+
+    function reset() {
+      // Hide overlay
+      document.getElementById('cantEatOverlay').style.display = 'none';
+
+      // Init snake
+      snake = [];
+      for (let i = START_LEN - 1; i >= 0; i--) {
+        snake.push({ x: 2 + i, y: 10 });
+      }
+      dir = { x: 1, y: 0 };
+      nextDir = { x: 1, y: 0 };
+      spawnFood();
+      score = 0;
+      $score.textContent = score;
+      running = true;
+
+      // Reset color
+      currentColorIndex = 0;
+      COLORS.snake = SNAKE_COLORS[currentColorIndex];
+      COLORS.snakeHead = SNAKE_COLORS[currentColorIndex];
+
+      if (loopId) cancelAnimationFrame(loopId);
+      scheduleTick();
+      draw();
+    }
+
+    function scheduleTick() {
+      let last = performance.now();
+      function frame(now) {
+        if (!running) return;
+        if (now - last >= TICK_MS) {
+          update();
+          draw();
+          last = now;
+        }
+        loopId = requestAnimationFrame(frame);
+      }
+      loopId = requestAnimationFrame(frame);
+    }
+
+    function spawnFood() {
+      const open = [];
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          if (!snake.some(s => s.x === x && s.y === y)) open.push({ x, y });
+        }
+      }
+      food = open[Math.floor(Math.random() * open.length)] || { x: 0, y: 0 };
+    }
+
+    function update() {
+      // queue direction safety
+      if ((nextDir.x !== -dir.x || nextDir.y !== -dir.y)) {
+        dir = nextDir;
+      }
+
+      const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+
+      // collisions
+      if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) {
+        gameOver();
+        return;
+      }
+      if (snake.some(seg => seg.x === head.x && seg.y === head.y)) {
+        gameOver();
+        return;
+      }
+
+      // move
+      snake.unshift(head);
+
+      // food
+      if (head.x === food.x && head.y === food.y) {
+        score += 1;
+        $score.textContent = score;
+        if (score > high) {
+          high = score;
+          $high.textContent = high;
+          try { localStorage.setItem('snakeHigh', String(high)); } catch {}
+        }
+        spawnFood();
+
+        // color cycle
+        currentColorIndex = (currentColorIndex + 1) % SNAKE_COLORS.length;
+        COLORS.snake = SNAKE_COLORS[currentColorIndex];
+        COLORS.snakeHead = SNAKE_COLORS[currentColorIndex];
+
+      } else {
+        snake.pop();
+      }
+    }
+
+    function gameOver() {
+      running = false;
+
+      // subtle flash
+      ctx.save();
+      ctx.globalAlpha = 0.15;
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+
+      // canvas text
+      ctx.fillStyle = '#e9eef3';
+      ctx.font = 'bold 24px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 10);
+      ctx.font = '16px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
+      ctx.fillText('Press Restart or Enter', canvas.width / 2, canvas.height / 2 + 18);
+
+      // show overlay below canvas
+      document.getElementById('cantEatOverlay').style.display = 'block';
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // snake
+      for (let i = snake.length - 1; i >= 0; i--) {
+        const seg = snake[i];
+        const isHead = i === 0;
+        const color = isHead ? COLORS.snakeHead : COLORS.snake;
+
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.roundRect(seg.x * TILE + 2, seg.y * TILE + 2, TILE - 4, TILE - 4, 4);
+        ctx.fill();
+
+        // subtle highlight
+        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        ctx.fillRect(seg.x * TILE + 3, seg.y * TILE + 3, TILE - 6, 4);
+      }
+
+      // food with glow
+      const fx = food.x * TILE, fy = food.y * TILE;
+      ctx.shadowColor = COLORS.foodGlow;
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = COLORS.food;
+      ctx.beginPath();
+      ctx.arc(fx + TILE / 2, fy + TILE / 2, TILE * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // soft grid overlay
+      ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+      ctx.lineWidth = 1;
+      for (let x = 1; x < COLS; x++) {
+        ctx.beginPath();
+        ctx.moveTo(x * TILE, 0);
+        ctx.lineTo(x * TILE, canvas.height);
+        ctx.stroke();
+      }
+      for (let y = 1; y < ROWS; y++) {
+        ctx.beginPath();
+        ctx.moveTo(0, y * TILE);
+        ctx.lineTo(canvas.width, y * TILE);
+        ctx.stroke();
+      }
+    }
+
+    // controls
+    const keyDir = {
+      ArrowUp: { x: 0, y: -1 }, KeyW: { x: 0, y: -1 },
+      ArrowDown: { x: 0, y: 1 }, KeyS: { x: 0, y: 1 },
+      ArrowLeft: { x: -1, y: 0 }, KeyA: { x: -1, y: 0 },
+      ArrowRight: { x: 1, y: 0 }, KeyD: { x: 1, y: 0 },
+    };
+
+    document.addEventListener('keydown', (e) => {
+      const code = e.code;
+      if (keyDir[code]) {
+        const cand = keyDir[code];
+        if (!(cand.x === -dir.x && cand.y === -dir.y)) nextDir = cand;
+        e.preventDefault();
+      }
+      // restart on Enter/Space when not running
+      if (!running && (code === 'Enter' || code === 'Space')) {
+        reset();
+      }
+    });
+
+    $restart.addEventListener('click', reset);
+    canvas.addEventListener('click', () => { if (!running) reset(); });
+
+    // start
+    reset();
+
+    // immediate key input
+    canvas.focus();
+
+    // roundRect polyfill
+    if (!CanvasRenderingContext2D.prototype.roundRect) {
+      CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+        if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+        else r = Object.assign({ tl: 0, tr: 0, br: 0, bl: 0 }, r || {});
+        this.beginPath();
+        this.moveTo(x + r.tl, y);
+        this.lineTo(x + w - r.tr, y);
+        this.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+        this.lineTo(x + w, y + h - r.br);
+        this.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+        this.lineTo(x + r.bl, y + h);
+        this.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+        this.lineTo(x, y + r.tl);
+        this.quadraticCurveTo(x, y, x + r.tl, y);
+        this.closePath();
+        return this;
+      };
+    }
+  </script>
+</body>
+</html>
